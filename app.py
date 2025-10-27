@@ -75,7 +75,24 @@ def _to_vector(sample: Dict[str, float]) -> np.ndarray:
 class Sample(BaseModel):
     """Un registro con todas las features como dict[str,float]."""
     model_config = ConfigDict(extra="forbid")
-    features: Dict[str, float] = Field(..., description="Mapa feature->valor numérico")
+
+    features: Dict[str, float] = Field(
+        ...,
+        description="Mapa feature->valor numérico",
+        example={
+            "fixed acidity": 7.4,
+            "volatile acidity": 0.70,
+            "citric acid": 0.00,
+            "residual sugar": 1.9,
+            "chlorides": 0.076,
+            "total sulfur dioxide": 34.0,
+            "density": 0.9978,
+            "pH": 3.51,
+            "sulphates": 0.56,
+            "alcohol": 9.4
+        }
+    )
+
 
 class PredictionOut(BaseModel):
     prediction: int | float
