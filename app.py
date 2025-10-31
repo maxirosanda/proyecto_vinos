@@ -6,7 +6,6 @@ import joblib, json, time
 import numpy as np
 from pathlib import Path
 
-
 APP_VERSION = "0.1.0"
 ARTIFACTS_DIR = Path("artifacts")
 # Admitimos ambos nombres por si guardaste con "modelo_vino.joblib"
