@@ -1,3 +1,3 @@
-https://drive.google.com/file/d/1f6aRPb8W9XD77mZdm6dFOWM8RzIz26BC/view?usp=sharing
+https://drive.google.com/drive/folders/17jBD9Ch6837PRSH6CcfM42X4oeEQ6LTj?usp=sharing
 https://github.com/maxirosanda/proyecto_vinos.git
 https://proyectovinos-production.up.railway.app/docs
