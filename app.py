@@ -1,13 +1,13 @@
 # app.py
-# === ML API simplificada sin métricas ===
+# === ML API simplificada sin métricas (con ejemplos reales en Swagger) ===
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Dict
 import joblib, json, time
 import numpy as np
 from pathlib import Path
 
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.1.4"
 ARTIFACTS_DIR = Path("artifacts")
 MODEL_CANDIDATES = [ARTIFACTS_DIR / "model.joblib", ARTIFACTS_DIR / "modelo_vino.joblib"]
 COLUMNS_PATH = ARTIFACTS_DIR / "feature_columns.json"
@@ -15,6 +15,7 @@ COLUMNS_PATH = ARTIFACTS_DIR / "feature_columns.json"
 _model = None
 _columns: List[str] = []
 
+# ====== CARGA PEREZOSA ======
 def _load_artifacts_lazy():
     global _model, _columns
     if _model is None:
@@ -33,6 +34,7 @@ def _load_artifacts_lazy():
         else:
             raise HTTPException(status_code=500, detail="Formato inválido en feature_columns.json")
 
+# ====== VALIDACIÓN ======
 def _to_vector(sample: Dict[str, float]) -> np.ndarray:
     missing = [c for c in _columns if c not in sample]
     if missing:
@@ -47,9 +49,24 @@ def _to_vector(sample: Dict[str, float]) -> np.ndarray:
             raise HTTPException(status_code=400, detail=f"'{k}' no puede ser negativo.")
     return np.array([float(sample[c]) for c in _columns], dtype=float)
 
+# ====== SCHEMAS ======
 class Sample(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    features: Dict[str, float]
+    features: Dict[str, float] = Field(
+        ...,
+        examples=[{
+            "fixed acidity": 7.4,
+            "volatile acidity": 0.70,
+            "citric acid": 0.00,
+            "residual sugar": 1.9,
+            "chlorides": 0.076,
+            "total sulfur dioxide": 34.0,
+            "density": 0.9978,
+            "pH": 3.51,
+            "sulphates": 0.56,
+            "alcohol": 9.4
+        }]
+    )
 
 class PredictionOut(BaseModel):
     prediction: str
@@ -60,14 +77,42 @@ class BatchOut(BaseModel):
     latency_ms: float
     count: int
 
+# ====== APP ======
 app = FastAPI(title="ML API", version=APP_VERSION)
 
+# === HEALTHCHECK ===
 @app.get("/health")
 def health():
     _load_artifacts_lazy()
     return {"status": "ok", "version": APP_VERSION, "n_features": len(_columns)}
 
-@app.post("/predict", response_model=PredictionOut)
+# === PREDICT (1 vino) ===
+@app.post(
+    "/predict",
+    response_model=PredictionOut,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "features": {
+                            "fixed acidity": 7.4,
+                            "volatile acidity": 0.70,
+                            "citric acid": 0.00,
+                            "residual sugar": 1.9,
+                            "chlorides": 0.076,
+                            "total sulfur dioxide": 34.0,
+                            "density": 0.9978,
+                            "pH": 3.51,
+                            "sulphates": 0.56,
+                            "alcohol": 9.4
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
 def predict(sample: Sample):
     _load_artifacts_lazy()
     try:
@@ -81,7 +126,63 @@ def predict(sample: Sample):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error de predicción: {e}")
 
-@app.post("/predict-batch", response_model=BatchOut)
+# === PREDICT BATCH (3 vinos de ejemplo) ===
+@app.post(
+    "/predict-batch",
+    response_model=BatchOut,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "features": {
+                                "fixed acidity": 7.4,
+                                "volatile acidity": 0.70,
+                                "citric acid": 0.00,
+                                "residual sugar": 1.9,
+                                "chlorides": 0.076,
+                                "total sulfur dioxide": 34.0,
+                                "density": 0.9978,
+                                "pH": 3.51,
+                                "sulphates": 0.56,
+                                "alcohol": 9.4
+                            }
+                        },
+                        {
+                            "features": {
+                                "fixed acidity": 6.8,
+                                "volatile acidity": 0.32,
+                                "citric acid": 0.31,
+                                "residual sugar": 6.2,
+                                "chlorides": 0.059,
+                                "total sulfur dioxide": 115.0,
+                                "density": 0.9928,
+                                "pH": 3.25,
+                                "sulphates": 0.61,
+                                "alcohol": 10.8
+                            }
+                        },
+                        {
+                            "features": {
+                                "fixed acidity": 8.3,
+                                "volatile acidity": 0.45,
+                                "citric acid": 0.37,
+                                "residual sugar": 2.5,
+                                "chlorides": 0.082,
+                                "total sulfur dioxide": 48.0,
+                                "density": 0.9944,
+                                "pH": 3.30,
+                                "sulphates": 0.74,
+                                "alcohol": 11.0
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    },
+)
 def predict_batch(samples: List[Sample]):
     _load_artifacts_lazy()
     if not samples:
