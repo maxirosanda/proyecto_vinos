@@ -1,124 +1,71 @@
-
+# app.py
+# === ML API simplificada sin métricas ===
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Dict, Any
+from pydantic import BaseModel, ConfigDict
+from typing import List, Dict
 import joblib, json, time
 import numpy as np
 from pathlib import Path
 
-
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.3"
 ARTIFACTS_DIR = Path("artifacts")
-# Admitimos ambos nombres por si guardaste con "modelo_vino.joblib"
 MODEL_CANDIDATES = [ARTIFACTS_DIR / "model.joblib", ARTIFACTS_DIR / "modelo_vino.joblib"]
 COLUMNS_PATH = ARTIFACTS_DIR / "feature_columns.json"
-METRICS_PATH = ARTIFACTS_DIR / "metrics.json"  # opcional
 
-# Carga perezosa (on-demand)
 _model = None
 _columns: List[str] = []
-_metrics: Dict[str, Any] = {}
 
 def _load_artifacts_lazy():
-    global _model, _columns, _metrics
+    global _model, _columns
     if _model is None:
-        # modelo
         model_path = next((p for p in MODEL_CANDIDATES if p.exists()), None)
         if model_path is None:
-            raise HTTPException(status_code=500, detail="Modelo no encontrado en artifacts/. Entrena y exporta primero.")
-        try:
-            _model = joblib.load(model_path)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error cargando modelo: {e}")
+            raise HTTPException(status_code=500, detail="Modelo no encontrado en artifacts/.")
+        _model = joblib.load(model_path)
 
-        # columnas
         if not COLUMNS_PATH.exists():
-            raise HTTPException(status_code=500, detail="feature_columns.json no encontrado en artifacts/.")
-        try:
-            raw = json.loads(COLUMNS_PATH.read_text(encoding="utf-8"))
-            # Soporta formato lista o dict {"feature_columns": [...]}
-            if isinstance(raw, list):
-                _columns = raw
-            elif isinstance(raw, dict) and "feature_columns" in raw and isinstance(raw["feature_columns"], list):
-                _columns = raw["feature_columns"]
-            else:
-                raise ValueError("Formato inválido en feature_columns.json")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error leyendo columnas: {e}")
-
-        # métricas (opcional)
-        if METRICS_PATH.exists():
-            try:
-                _metrics = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
-            except Exception:
-                _metrics = {}
+            raise HTTPException(status_code=500, detail="feature_columns.json no encontrado.")
+        raw = json.loads(COLUMNS_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            _columns = raw
+        elif isinstance(raw, dict) and "feature_columns" in raw:
+            _columns = raw["feature_columns"]
+        else:
+            raise HTTPException(status_code=500, detail="Formato inválido en feature_columns.json")
 
 def _to_vector(sample: Dict[str, float]) -> np.ndarray:
-    """Valida claves/tipos y respeta el orden de _columns."""
     missing = [c for c in _columns if c not in sample]
     if missing:
         raise HTTPException(status_code=400, detail=f"Faltan columnas requeridas: {missing}")
     extra = [k for k in sample.keys() if k not in _columns]
     if extra:
         raise HTTPException(status_code=400, detail=f"Campos no permitidos: {extra}")
-    try:
-        # Validación numérica básica + no-negatividad (ajustable)
-        for k, v in sample.items():
-            if not isinstance(v, (int, float)):
-                raise TypeError(f"'{k}' debe ser numérico (int/float).")
-            if v < 0:
-                raise ValueError(f"'{k}' no puede ser negativo.")
-        return np.array([float(sample[c]) for c in _columns], dtype=float)
-    except (TypeError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    for k, v in sample.items():
+        if not isinstance(v, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{k}' debe ser numérico.")
+        if v < 0:
+            raise HTTPException(status_code=400, detail=f"'{k}' no puede ser negativo.")
+    return np.array([float(sample[c]) for c in _columns], dtype=float)
 
-# ===== Esquemas Pydantic (v2) =====
 class Sample(BaseModel):
-    """Un registro con todas las features como dict[str,float]."""
     model_config = ConfigDict(extra="forbid")
-
-    features: Dict[str, float] = Field(
-        ...,
-        description="Mapa feature->valor numérico",
-        example={
-            "fixed acidity": 7.4,
-            "volatile acidity": 0.70,
-            "citric acid": 0.00,
-            "residual sugar": 1.9,
-            "chlorides": 0.076,
-            "total sulfur dioxide": 34.0,
-            "density": 0.9978,
-            "pH": 3.51,
-            "sulphates": 0.56,
-            "alcohol": 9.4
-        }
-    )
-
+    features: Dict[str, float]
 
 class PredictionOut(BaseModel):
-    prediction: int | float
-    proba: List[float] | None = None
+    prediction: str
     latency_ms: float
-    warnings: List[str] = []
 
 class BatchOut(BaseModel):
-    predictions: List[int | float]
-    proba: List[List[float]] | None = None
+    predictions: List[str]
     latency_ms: float
     count: int
-    warnings: List[str] = []
 
 app = FastAPI(title="ML API", version=APP_VERSION)
 
 @app.get("/health")
 def health():
     _load_artifacts_lazy()
-    return {
-        "status": "ok",
-        "version": APP_VERSION,
-        "n_features": len(_columns),
-        "metrics": _metrics or {"note": "sin metrics.json"},
-    }
+    return {"status": "ok", "version": APP_VERSION, "n_features": len(_columns)}
 
 @app.post("/predict", response_model=PredictionOut)
 def predict(sample: Sample):
@@ -127,9 +74,8 @@ def predict(sample: Sample):
         start = time.perf_counter()
         x = _to_vector(sample.features).reshape(1, -1)
         pred = _model.predict(x).tolist()[0]
-        proba = _model.predict_proba(x).tolist()[0] if hasattr(_model, "predict_proba") else None
         latency_ms = round((time.perf_counter() - start) * 1000.0, 3)
-        return PredictionOut(prediction=pred, proba=proba, latency_ms=latency_ms, warnings=[])
+        return PredictionOut(prediction=str(pred), latency_ms=latency_ms)
     except HTTPException:
         raise
     except Exception as e:
@@ -144,9 +90,12 @@ def predict_batch(samples: List[Sample]):
         start = time.perf_counter()
         X = np.vstack([_to_vector(s.features) for s in samples])
         preds = _model.predict(X).tolist()
-        proba = _model.predict_proba(X).tolist() if hasattr(_model, "predict_proba") else None
         latency_ms = round((time.perf_counter() - start) * 1000.0, 3)
-        return BatchOut(predictions=preds, proba=proba, latency_ms=latency_ms, count=len(preds), warnings=[])
+        return BatchOut(
+            predictions=[str(p) for p in preds],
+            latency_ms=latency_ms,
+            count=len(preds)
+        )
     except HTTPException:
         raise
     except Exception as e:
